@@ -7,5 +7,6 @@ public enum RecognitionState
 {
     Idle,
     LoadingModel,
-    Listening
+    Listening,
+    RecognizingFile
 }

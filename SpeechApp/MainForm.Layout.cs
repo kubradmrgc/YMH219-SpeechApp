@@ -80,7 +80,8 @@ public partial class MainForm
         View = View.Details,
         FullRowSelect = true,
         GridLines = true,
-        HideSelection = false
+        HideSelection = false,
+        ShowItemToolTips = true
     };
     private readonly GroupBox resultsGroup = new() { Text = "Sonuçlar (0)", Dock = DockStyle.Fill, Padding = new Padding(8) };
     private readonly Button recognizeFileButton = CreateButton("recognizeFileButton", "WAV Dosyasından Tanı...");
@@ -160,10 +161,12 @@ public partial class MainForm
         textGroup.Controls.Add(sttTextBox);
         textGroup.Controls.Add(partialLabel);
 
-        resultsList.Columns.Add("Saat", 80);
+        resultsList.Columns.Add("Saat", 70);
         resultsList.Columns.Add("Metin", 300);
+        resultsList.Columns.Add("Kaynak", 100);
         resultsList.Resize += (_, _) =>
-            resultsList.Columns[1].Width = Math.Max(100, resultsList.ClientSize.Width - resultsList.Columns[0].Width - 4);
+            resultsList.Columns[1].Width = Math.Max(100,
+                resultsList.ClientSize.Width - resultsList.Columns[0].Width - resultsList.Columns[2].Width - 4);
         resultsGroup.Controls.Add(resultsList);
 
         var split = new SplitContainer { Dock = DockStyle.Fill };

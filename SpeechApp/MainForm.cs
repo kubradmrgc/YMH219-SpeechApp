@@ -11,7 +11,11 @@ public partial class MainForm : Form
     private readonly TextToSpeechService tts = new();
     private readonly VoskModelManager modelManager = new();
     private readonly SpeechToTextService stt = new();
+    private readonly TranscriptStore transcript = new();
     private CancellationTokenSource? downloadCts;
+    private CancellationTokenSource? fileCts;
+    private string recognitionSource = MicrophoneSource;
+    private const string MicrophoneSource = "Mikrofon";
     private int highlightStart = -1;
     private int highlightLength;
 
@@ -60,13 +64,30 @@ public partial class MainForm : Form
         listenButton.Click += async (_, _) => await StartListeningAsync();
         stopListenButton.Click += (_, _) =>
         {
+            if (stt.State == RecognitionState.RecognizingFile)
+            {
+                fileCts?.Cancel();
+                return;
+            }
+
             stt.Stop();
             statusLabel.Text = "Dinleme durduruldu.";
         };
+        recognizeFileButton.Click += async (_, _) => await RecognizeFileAsync();
+        sendToTtsButton.Click += (_, _) => SendToTts();
         clearResultsButton.Click += (_, _) =>
         {
             sttTextBox.Clear();
             partialLabel.Text = string.Empty;
+            transcript.Clear();
+        };
+        sttTextBox.TextChanged += (_, _) => sendToTtsButton.Enabled = sttTextBox.TextLength > 0;
+
+        transcript.EntryAdded += AddResultRow;
+        transcript.Cleared += () =>
+        {
+            resultsList.Items.Clear();
+            UpdateResultsTitle();
         };
 
         stt.StateChanged += state => RunOnUi(() => UpdateSttState(state));
@@ -128,9 +149,27 @@ public partial class MainForm : Form
             return;
         }
 
+        if (tts.State != SpeechPlaybackState.Idle)
+        {
+            DialogResult answer = MessageBox.Show(this,
+                "Şu anda metin sesli okunuyor. Hoparlörden gelen ses de mikrofona girip yazıya çevrilebilir.\n\n" +
+                "Evet: okumayı durdur ve dinlemeye başla\nHayır: okuma sürerken dinle\nİptal: dinlemeye başlama",
+                "Okuma sürüyor", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (answer == DialogResult.Cancel)
+            {
+                return;
+            }
+
+            if (answer == DialogResult.Yes)
+            {
+                tts.Stop();
+            }
+        }
+
         try
         {
             statusLabel.Text = "Konuşma tanıma modeli yükleniyor...";
+            recognitionSource = MicrophoneSource;
             await stt.StartAsync(modelManager.ModelPath!, microphoneCombo.SelectedItem as MicrophoneInfo);
             statusLabel.Text = $"Dinleniyor ({microphoneCombo.SelectedItem}). Konuşmaya başlayabilirsiniz.";
         }
@@ -140,17 +179,111 @@ public partial class MainForm : Form
         }
     }
 
+    private async Task RecognizeFileAsync()
+    {
+        if (!modelManager.Locate())
+        {
+            UpdateModelStatus();
+            ShowWarning("Konuşma tanıma modeli yüklü değil. Önce Türkçe modeli indirin.");
+            return;
+        }
+
+        using var dialog = new OpenFileDialog
+        {
+            Title = "Yazıya çevrilecek ses dosyasını seçin",
+            Filter = "WAV ses dosyası (*.wav)|*.wav"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        string fileName = Path.GetFileName(dialog.FileName);
+        recognitionSource = fileName;
+        fileCts = new CancellationTokenSource();
+        var progress = new Progress<double>(percent =>
+        {
+            if (stt.State == RecognitionState.RecognizingFile)
+            {
+                sttIndicator.Text = $"● TANINIYOR %{percent:0}";
+                statusLabel.Text = $"{fileName} yazıya çevriliyor... %{percent:0}";
+            }
+        });
+
+        try
+        {
+            statusLabel.Text = $"{fileName} yazıya çevriliyor...";
+            int count = await stt.RecognizeFileAsync(modelManager.ModelPath!, dialog.FileName, progress, fileCts.Token);
+            statusLabel.Text = count == 0
+                ? $"{fileName} dosyasında konuşma bulunamadı."
+                : $"{fileName}: {count} cümle tanındı.";
+        }
+        catch (OperationCanceledException)
+        {
+            statusLabel.Text = "Dosyadan tanıma iptal edildi.";
+        }
+        catch (SpeechAppException ex)
+        {
+            ShowWarning(ex.Message);
+        }
+        finally
+        {
+            fileCts.Dispose();
+            fileCts = null;
+            recognitionSource = MicrophoneSource;
+        }
+    }
+
     private void AppendRecognizedText(string text)
     {
-        string sentence = char.ToUpper(text[0], System.Globalization.CultureInfo.GetCultureInfo("tr-TR")) + text[1..];
+        RecognitionEntry entry = transcript.Add(text, recognitionSource);
         if (sttTextBox.TextLength > 0 && !sttTextBox.Text.EndsWith('\n'))
         {
             sttTextBox.AppendText(Environment.NewLine);
         }
 
-        sttTextBox.AppendText(sentence);
+        sttTextBox.AppendText(entry.Text);
         sttTextBox.ScrollToCaret();
-        statusLabel.Text = $"Tanındı: {sentence}";
+        statusLabel.Text = $"Tanındı: {entry.Text}";
+    }
+
+    private void AddResultRow(RecognitionEntry entry)
+    {
+        var item = new ListViewItem(entry.TimeText) { Tag = entry, ToolTipText = entry.Text };
+        item.SubItems.Add(entry.Text);
+        item.SubItems.Add(entry.Source);
+        resultsList.Items.Add(item);
+        item.EnsureVisible();
+        UpdateResultsTitle();
+    }
+
+    private void UpdateResultsTitle()
+    {
+        resultsGroup.Text = $"Sonuçlar ({transcript.Count})";
+    }
+
+    /// <summary>
+    /// Listede seçili sonuçlar varsa onları, yoksa tanınan metnin tamamını seslendirme sekmesine aktarır.
+    /// </summary>
+    private void SendToTts()
+    {
+        string text = resultsList.SelectedItems.Count > 0
+            ? string.Join(Environment.NewLine, resultsList.SelectedItems.Cast<ListViewItem>().Select(i => ((RecognitionEntry)i.Tag!).Text))
+            : sttTextBox.Text.Trim();
+
+        if (text.Length == 0)
+        {
+            ShowWarning("Aktarılacak tanınmış metin yok.");
+            return;
+        }
+
+        tts.Stop();
+        ttsTextBox.Text = text;
+        tabs.SelectedTab = ttsTab;
+        ttsTextBox.Focus();
+        statusLabel.Text = resultsList.SelectedItems.Count > 0
+            ? $"{resultsList.SelectedItems.Count} seçili sonuç seslendirme sekmesine aktarıldı."
+            : "Tanınan metin seslendirme sekmesine aktarıldı. '▶ Oku' ile dinleyebilirsiniz.";
     }
 
     private void UpdateSttState(RecognitionState state)
@@ -160,7 +293,7 @@ public partial class MainForm : Form
         bool modelReady = modelManager.IsInstalled && !IsDownloading;
 
         listenButton.Enabled = idle && modelReady && microphoneCombo.Items.Count > 0;
-        stopListenButton.Enabled = listening;
+        stopListenButton.Enabled = listening || state == RecognitionState.RecognizingFile;
         microphoneCombo.Enabled = idle;
         refreshMicrophonesButton.Enabled = idle;
         recognizeFileButton.Enabled = idle && modelReady;
@@ -171,6 +304,7 @@ public partial class MainForm : Form
         {
             RecognitionState.LoadingModel => ("● YÜKLENİYOR", Color.DarkOrange),
             RecognitionState.Listening => ("● DİNLENİYOR", Color.Firebrick),
+            RecognitionState.RecognizingFile => ("● TANINIYOR", Color.SteelBlue),
             _ => ("■ HAZIR", Color.DimGray)
         };
 
@@ -317,6 +451,9 @@ public partial class MainForm : Form
                 break;
             case RecognitionState.Listening:
                 operations.Add("Mikrofon dinleniyor");
+                break;
+            case RecognitionState.RecognizingFile:
+                operations.Add("WAV dosyası yazıya çevriliyor");
                 break;
         }
 
@@ -471,6 +608,7 @@ public partial class MainForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         downloadCts?.Cancel();
+        fileCts?.Cancel();
         stt.Dispose();
         tts.Dispose();
         base.OnFormClosed(e);

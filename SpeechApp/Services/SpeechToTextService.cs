@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 using SpeechApp.Models;
 using Vosk;
 
@@ -179,6 +180,97 @@ public sealed class SpeechToTextService : IDisposable
         waveIn = input;
         silenceTimer = new System.Threading.Timer(_ => CheckSilence(), null, SilenceCheckDelay, Timeout.InfiniteTimeSpan);
         SetState(RecognitionState.Listening);
+    }
+
+    /// <summary>
+    /// WAV dosyasındaki konuşmayı yazıya çevirir. Her cümle <see cref="FinalResult"/> ile bildirilir.
+    /// Dosya gerekirse mono ve 16 kHz'e dönüştürülür. Tanınan cümle sayısını döndürür.
+    /// </summary>
+    public async Task<int> RecognizeFileAsync(string modelPath, string wavPath, IProgress<double>? progress, CancellationToken cancellationToken)
+    {
+        if (State != RecognitionState.Idle)
+        {
+            throw new SpeechAppException("Dosyadan tanıma için önce mikrofon dinlemesini durdurun.");
+        }
+
+        if (!File.Exists(wavPath))
+        {
+            throw new SpeechAppException($"Ses dosyası bulunamadı:\n{wavPath}");
+        }
+
+        await LoadModelAsync(modelPath);
+        SetState(RecognitionState.RecognizingFile);
+        try
+        {
+            return await Task.Run(() => RecognizeFile(wavPath, progress, cancellationToken), cancellationToken);
+        }
+        catch (Exception ex) when (ex is FormatException or InvalidDataException or ArgumentException or EndOfStreamException)
+        {
+            throw new SpeechAppException(
+                $"Ses dosyası okunamadı: {Path.GetFileName(wavPath)}\n" +
+                "Yalnızca sıkıştırılmamış (PCM veya IEEE float) WAV dosyaları desteklenir.\n" +
+                $"Ayrıntı: {ex.Message}", ex);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new SpeechAppException($"Ses dosyası açılamadı: {ex.Message}", ex);
+        }
+        finally
+        {
+            SetState(RecognitionState.Idle);
+        }
+    }
+
+    private int RecognizeFile(string wavPath, IProgress<double>? progress, CancellationToken cancellationToken)
+    {
+        using var reader = new WaveFileReader(wavPath);
+        ISampleProvider samples = reader.ToSampleProvider();
+        if (samples.WaveFormat.Channels == 2)
+        {
+            samples = new StereoToMonoSampleProvider(samples);
+        }
+        else if (samples.WaveFormat.Channels != 1)
+        {
+            throw new SpeechAppException("Yalnızca mono veya stereo WAV dosyaları desteklenir.");
+        }
+
+        if (samples.WaveFormat.SampleRate != SampleRate)
+        {
+            samples = new WdlResamplingSampleProvider(samples, SampleRate);
+        }
+
+        var pcm = new SampleToWaveProvider16(samples);
+        using var fileRecognizer = new VoskRecognizer(model, SampleRate);
+        byte[] buffer = new byte[SampleRate];
+        int sentences = 0;
+        int read;
+
+        void Emit(string json)
+        {
+            string text = ReadText(json, "text");
+            if (text.Length > 0)
+            {
+                sentences++;
+                FinalResult?.Invoke(text);
+            }
+        }
+
+        while ((read = pcm.Read(buffer.AsSpan())) > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (fileRecognizer.AcceptWaveform(buffer, read))
+            {
+                Emit(fileRecognizer.Result());
+            }
+
+            if (reader.Length > 0)
+            {
+                progress?.Report(Math.Min(100.0, reader.Position * 100.0 / reader.Length));
+            }
+        }
+
+        Emit(fileRecognizer.FinalResult());
+        return sentences;
     }
 
     /// <summary>Dinlemeyi durdurur; son söylenen bölüm de kesin sonuç olarak bildirilir.</summary>
