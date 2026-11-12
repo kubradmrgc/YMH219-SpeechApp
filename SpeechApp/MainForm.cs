@@ -83,6 +83,10 @@ public partial class MainForm : Form
         };
         sttTextBox.TextChanged += (_, _) => sendToTtsButton.Enabled = sttTextBox.TextLength > 0;
 
+        openTextButton.Click += (_, _) => OpenTextFile();
+        saveTextButton.Click += (_, _) => SaveTextFile();
+        saveResultsButton.Click += (_, _) => SaveResultsFile();
+
         transcript.EntryAdded += AddResultRow;
         transcript.Cleared += () =>
         {
@@ -260,6 +264,77 @@ public partial class MainForm : Form
     private void UpdateResultsTitle()
     {
         resultsGroup.Text = $"Sonuçlar ({transcript.Count})";
+        saveResultsButton.Enabled = transcript.Count > 0;
+    }
+
+    private const string TextFileFilter = "Metin dosyası (*.txt)|*.txt|Tüm dosyalar (*.*)|*.*";
+
+    private void OpenTextFile()
+    {
+        using var dialog = new OpenFileDialog { Title = "Seslendirilecek metin dosyasını açın", Filter = TextFileFilter };
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            string text = TextFileService.ReadText(dialog.FileName);
+            if (text.Length > TextToSpeechService.MaxTextLength)
+            {
+                ShowWarning($"Dosyadaki metin çok uzun ({text.Length} karakter). En fazla {TextToSpeechService.MaxTextLength} karakter seslendirilebilir.");
+                return;
+            }
+
+            ttsTextBox.Text = text;
+            statusLabel.Text = $"{Path.GetFileName(dialog.FileName)} açıldı ({text.Length} karakter).";
+        }
+        catch (SpeechAppException ex)
+        {
+            ShowWarning(ex.Message);
+        }
+    }
+
+    private void SaveTextFile()
+    {
+        if (string.IsNullOrWhiteSpace(ttsTextBox.Text))
+        {
+            ShowWarning("Kaydedilecek metin yok. Önce bir metin yazın.");
+            return;
+        }
+
+        SaveWithDialog("Metni kaydet", "metin.txt", ttsTextBox.Text);
+    }
+
+    private void SaveResultsFile()
+    {
+        if (transcript.Count == 0)
+        {
+            ShowWarning("Kaydedilecek tanıma sonucu yok.");
+            return;
+        }
+
+        SaveWithDialog("Tanıma sonuçlarını kaydet", $"tanima-sonuclari-{DateTime.Now:yyyyMMdd-HHmm}.txt",
+            TextFileService.BuildTranscriptDocument(transcript.Entries));
+    }
+
+    private void SaveWithDialog(string title, string defaultName, string content)
+    {
+        using var dialog = new SaveFileDialog { Title = title, Filter = TextFileFilter, FileName = defaultName, DefaultExt = "txt" };
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            TextFileService.WriteText(dialog.FileName, content);
+            statusLabel.Text = $"Kaydedildi: {dialog.FileName}";
+        }
+        catch (SpeechAppException ex)
+        {
+            ShowError(ex.Message);
+        }
     }
 
     /// <summary>
@@ -517,6 +592,7 @@ public partial class MainForm : Form
         voiceCombo.Enabled = idle;
         rateTrackBar.Enabled = idle;
         clearTextButton.Enabled = idle;
+        openTextButton.Enabled = idle;
         ttsTextBox.ReadOnly = !idle;
 
         (ttsIndicator.Text, ttsIndicator.BackColor) = state switch
