@@ -10,6 +10,7 @@ public partial class MainForm : Form
 {
     private readonly TextToSpeechService tts = new();
     private readonly VoskModelManager modelManager = new();
+    private readonly SpeechToTextService stt = new();
     private CancellationTokenSource? downloadCts;
     private int highlightStart = -1;
     private int highlightLength;
@@ -55,14 +56,131 @@ public partial class MainForm : Form
         cancelDownloadButton.Click += (_, _) => downloadCts?.Cancel();
         chooseModelButton.Click += (_, _) => ChooseModelFolder();
 
+        refreshMicrophonesButton.Click += (_, _) => LoadMicrophones();
+        listenButton.Click += async (_, _) => await StartListeningAsync();
+        stopListenButton.Click += (_, _) =>
+        {
+            stt.Stop();
+            statusLabel.Text = "Dinleme durduruldu.";
+        };
+        clearResultsButton.Click += (_, _) =>
+        {
+            sttTextBox.Clear();
+            partialLabel.Text = string.Empty;
+        };
+
+        stt.StateChanged += state => RunOnUi(() => UpdateSttState(state));
+        stt.PartialResult += text => RunOnUi(() => partialLabel.Text = text.Length == 0 ? string.Empty : $"… {text}");
+        stt.FinalResult += text => RunOnUi(() => AppendRecognizedText(text));
+        stt.LevelChanged += level => RunOnUi(() => levelBar.Value = Math.Clamp((int)(Math.Sqrt(level) * 100), 0, 100));
+        stt.Failed += message => RunOnUi(() => ShowError(message));
+        stt.Warning += message => RunOnUi(() => ShowWarning(message));
+
         cancelDownloadButton.Enabled = false;
-        stopListenButton.Enabled = false;
         sendToTtsButton.Enabled = false;
         saveResultsButton.Enabled = false;
 
         LoadVoices();
         UpdateTtsState(SpeechPlaybackState.Idle);
+        LoadMicrophones();
         UpdateModelStatus();
+    }
+
+    private void LoadMicrophones()
+    {
+        string? previous = (microphoneCombo.SelectedItem as MicrophoneInfo)?.Name;
+        IReadOnlyList<MicrophoneInfo> microphones;
+        try
+        {
+            microphones = SpeechToTextService.GetMicrophones();
+        }
+        catch (Exception ex)
+        {
+            microphones = Array.Empty<MicrophoneInfo>();
+            statusLabel.Text = $"Mikrofon listesi alınamadı: {ex.Message}";
+        }
+
+        microphoneCombo.Items.Clear();
+        foreach (MicrophoneInfo microphone in microphones)
+        {
+            microphoneCombo.Items.Add(microphone);
+        }
+
+        if (microphones.Count == 0)
+        {
+            statusLabel.Text = "Mikrofon bulunamadı. Bir mikrofon takıp 'Yenile' düğmesine basın.";
+        }
+        else
+        {
+            MicrophoneInfo selected = microphones.FirstOrDefault(m => m.Name == previous) ?? microphones[0];
+            microphoneCombo.SelectedItem = selected;
+        }
+
+        UpdateSttState(stt.State);
+    }
+
+    private async Task StartListeningAsync()
+    {
+        if (!modelManager.Locate())
+        {
+            UpdateModelStatus();
+            ShowWarning("Konuşma tanıma modeli yüklü değil.\n'Modeli İndir' düğmesiyle Türkçe modeli indirin veya 'Klasör Seç...' ile model klasörünü gösterin.");
+            return;
+        }
+
+        try
+        {
+            statusLabel.Text = "Konuşma tanıma modeli yükleniyor...";
+            await stt.StartAsync(modelManager.ModelPath!, microphoneCombo.SelectedItem as MicrophoneInfo);
+            statusLabel.Text = $"Dinleniyor ({microphoneCombo.SelectedItem}). Konuşmaya başlayabilirsiniz.";
+        }
+        catch (SpeechAppException ex)
+        {
+            ShowWarning(ex.Message);
+        }
+    }
+
+    private void AppendRecognizedText(string text)
+    {
+        string sentence = char.ToUpper(text[0], System.Globalization.CultureInfo.GetCultureInfo("tr-TR")) + text[1..];
+        if (sttTextBox.TextLength > 0 && !sttTextBox.Text.EndsWith('\n'))
+        {
+            sttTextBox.AppendText(Environment.NewLine);
+        }
+
+        sttTextBox.AppendText(sentence);
+        sttTextBox.ScrollToCaret();
+        statusLabel.Text = $"Tanındı: {sentence}";
+    }
+
+    private void UpdateSttState(RecognitionState state)
+    {
+        bool idle = state == RecognitionState.Idle;
+        bool listening = state == RecognitionState.Listening;
+        bool modelReady = modelManager.IsInstalled && !IsDownloading;
+
+        listenButton.Enabled = idle && modelReady && microphoneCombo.Items.Count > 0;
+        stopListenButton.Enabled = listening;
+        microphoneCombo.Enabled = idle;
+        refreshMicrophonesButton.Enabled = idle;
+        recognizeFileButton.Enabled = idle && modelReady;
+        downloadModelButton.Enabled = idle && !IsDownloading;
+        chooseModelButton.Enabled = idle && !IsDownloading;
+
+        (sttIndicator.Text, sttIndicator.BackColor) = state switch
+        {
+            RecognitionState.LoadingModel => ("● YÜKLENİYOR", Color.DarkOrange),
+            RecognitionState.Listening => ("● DİNLENİYOR", Color.Firebrick),
+            _ => ("■ HAZIR", Color.DimGray)
+        };
+
+        if (idle)
+        {
+            levelBar.Value = 0;
+            partialLabel.Text = string.Empty;
+        }
+
+        UpdateActiveOperation();
     }
 
     private bool IsDownloading => downloadCts is not null;
@@ -82,14 +200,9 @@ public partial class MainForm : Form
         }
 
         downloadModelButton.Text = installed ? "Yeniden İndir" : "Modeli İndir";
-        downloadModelButton.Enabled = !IsDownloading;
-        chooseModelButton.Enabled = !IsDownloading;
         cancelDownloadButton.Enabled = IsDownloading;
         downloadProgress.Visible = IsDownloading;
-
-        listenButton.Enabled = installed && !IsDownloading;
-        recognizeFileButton.Enabled = installed && !IsDownloading;
-        UpdateActiveOperation();
+        UpdateSttState(stt.State);
     }
 
     private async Task DownloadModelAsync()
@@ -195,6 +308,16 @@ public partial class MainForm : Form
         if (IsDownloading)
         {
             operations.Add("Model indiriliyor");
+        }
+
+        switch (stt.State)
+        {
+            case RecognitionState.LoadingModel:
+                operations.Add("Tanıma modeli yükleniyor");
+                break;
+            case RecognitionState.Listening:
+                operations.Add("Mikrofon dinleniyor");
+                break;
         }
 
         activeOperationLabel.Text = operations.Count == 0
@@ -348,6 +471,7 @@ public partial class MainForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         downloadCts?.Cancel();
+        stt.Dispose();
         tts.Dispose();
         base.OnFormClosed(e);
     }

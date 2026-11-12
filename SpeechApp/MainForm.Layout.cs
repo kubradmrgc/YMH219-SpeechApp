@@ -48,7 +48,7 @@ public partial class MainForm
     private readonly Button chooseModelButton = CreateButton("chooseModelButton", "Klasör Seç...");
     private readonly ProgressBar downloadProgress = new() { Name = "downloadProgress", Width = 180, Height = 22, Margin = new Padding(12, 7, 3, 3), Visible = false };
 
-    private readonly ComboBox microphoneCombo = new() { Name = "microphoneCombo", DropDownStyle = ComboBoxStyle.DropDownList, Width = 230 };
+    private readonly ComboBox microphoneCombo = new() { Name = "microphoneCombo", DropDownStyle = ComboBoxStyle.DropDownList, Width = 230, DropDownWidth = 420 };
     private readonly Button refreshMicrophonesButton = CreateButton("refreshMicrophonesButton", "Yenile");
     private readonly Button listenButton = CreateButton("listenButton", "● Dinlemeyi Başlat");
     private readonly Button stopListenButton = CreateButton("stopListenButton", "■ Durdur");
