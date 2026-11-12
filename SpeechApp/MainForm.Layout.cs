@@ -28,6 +28,7 @@ public partial class MainForm
     {
         Name = "ttsTextBox",
         Dock = DockStyle.Fill,
+        BackColor = Color.White,
         Font = new Font("Segoe UI", 12f),
         HideSelection = false,
         DetectUrls = false

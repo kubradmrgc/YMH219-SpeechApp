@@ -10,5 +10,7 @@ public enum SpeechPlaybackState
     /// <summary>Metin ses akışına dönüştürülüyor.</summary>
     Preparing,
     /// <summary>Ses çalınıyor.</summary>
-    Speaking
+    Speaking,
+    /// <summary>Okuma duraklatıldı; kaldığı yerden devam edebilir.</summary>
+    Paused
 }

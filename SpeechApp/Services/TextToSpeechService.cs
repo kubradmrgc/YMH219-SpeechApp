@@ -12,6 +12,8 @@ namespace SpeechApp.Services;
 public sealed class TextToSpeechService : IDisposable
 {
     public const int MaxTextLength = 20_000;
+    public const double MinRate = 0.5;
+    public const double MaxRate = 2.0;
 
     private readonly SpeechSynthesizer synthesizer = new();
     private readonly MediaPlayer player = new() { AutoPlay = false };
@@ -20,6 +22,7 @@ public sealed class TextToSpeechService : IDisposable
 
     public TextToSpeechService()
     {
+        synthesizer.Options.IncludeWordBoundaryMetadata = true;
         player.MediaEnded += (_, _) => OnPlaybackEnded();
         player.MediaFailed += (_, args) =>
         {
@@ -45,6 +48,9 @@ public sealed class TextToSpeechService : IDisposable
     /// <summary>Çalma sırasında oluşan hata; parametre kullanıcıya gösterilecek mesajdır.</summary>
     public event Action<string>? Failed;
 
+    /// <summary>Bir kelime okunmaya başlandığında tetiklenir. Parametreler: metindeki başlangıç ve uzunluk.</summary>
+    public event Action<int, int>? WordReached;
+
     public IReadOnlyList<VoiceOption> GetVoices()
     {
         return SpeechSynthesizer.AllVoices
@@ -54,8 +60,10 @@ public sealed class TextToSpeechService : IDisposable
             .ToList();
     }
 
-    /// <summary>Metni seçilen sesle okumaya başlar. Geçersiz durumda <see cref="SpeechAppException"/> fırlatır.</summary>
-    public async Task SpeakAsync(string text, VoiceOption? voice)
+    /// <summary>
+    /// Metni seçilen ses ve hızla okumaya başlar. Geçersiz durumda <see cref="SpeechAppException"/> fırlatır.
+    /// </summary>
+    public async Task SpeakAsync(string text, VoiceOption? voice, double rate = 1.0)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -75,6 +83,7 @@ public sealed class TextToSpeechService : IDisposable
         try
         {
             synthesizer.Voice = FindVoice(voice);
+            synthesizer.Options.SpeakingRate = Math.Clamp(rate, MinRate, MaxRate);
             stream = await synthesizer.SynthesizeTextToStreamAsync(text);
         }
         catch (SpeechAppException)
@@ -96,7 +105,31 @@ public sealed class TextToSpeechService : IDisposable
         }
 
         currentStream = stream;
-        player.Source = MediaSource.CreateFromStream(stream, stream.ContentType);
+        var item = new MediaPlaybackItem(MediaSource.CreateFromStream(stream, stream.ContentType));
+        TrackWordBoundaries(item, id);
+        player.Source = item;
+        player.Play();
+        SetState(SpeechPlaybackState.Speaking);
+    }
+
+    public void Pause()
+    {
+        if (State != SpeechPlaybackState.Speaking)
+        {
+            return;
+        }
+
+        player.Pause();
+        SetState(SpeechPlaybackState.Paused);
+    }
+
+    public void Resume()
+    {
+        if (State != SpeechPlaybackState.Paused)
+        {
+            return;
+        }
+
         player.Play();
         SetState(SpeechPlaybackState.Speaking);
     }
@@ -109,6 +142,40 @@ public sealed class TextToSpeechService : IDisposable
         currentStream?.Dispose();
         currentStream = null;
         SetState(SpeechPlaybackState.Idle);
+    }
+
+    private void TrackWordBoundaries(MediaPlaybackItem item, int id)
+    {
+        void Register(uint index)
+        {
+            TimedMetadataTrack track = item.TimedMetadataTracks[(int)index];
+            if (track.Id != "SpeechWord")
+            {
+                return;
+            }
+
+            item.TimedMetadataTracks.SetPresentationMode(index, TimedMetadataTrackPresentationMode.ApplicationPresented);
+            track.CueEntered += (_, args) =>
+            {
+                if (id == requestId && args.Cue is SpeechCue { StartPositionInInput: int start, EndPositionInInput: int end })
+                {
+                    WordReached?.Invoke(start, end - start + 1);
+                }
+            };
+        }
+
+        for (uint i = 0; i < item.TimedMetadataTracks.Count; i++)
+        {
+            Register(i);
+        }
+
+        item.TimedMetadataTracksChanged += (_, args) =>
+        {
+            if (args.CollectionChange == Windows.Foundation.Collections.CollectionChange.ItemInserted)
+            {
+                Register(args.Index);
+            }
+        };
     }
 
     private static VoiceInformation FindVoice(VoiceOption? voice)
