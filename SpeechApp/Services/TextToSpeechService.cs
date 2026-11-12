@@ -1,0 +1,153 @@
+using SpeechApp.Models;
+using Windows.Media.Core;
+using Windows.Media.Playback;
+using Windows.Media.SpeechSynthesis;
+
+namespace SpeechApp.Services;
+
+/// <summary>
+/// Windows konuşma sentezleyicisi ile metni ses akışına çevirir ve MediaPlayer ile çalar.
+/// Olaylar arka plan iş parçacıklarından tetiklenebilir.
+/// </summary>
+public sealed class TextToSpeechService : IDisposable
+{
+    public const int MaxTextLength = 20_000;
+
+    private readonly SpeechSynthesizer synthesizer = new();
+    private readonly MediaPlayer player = new() { AutoPlay = false };
+    private SpeechSynthesisStream? currentStream;
+    private int requestId;
+
+    public TextToSpeechService()
+    {
+        player.MediaEnded += (_, _) => OnPlaybackEnded();
+        player.MediaFailed += (_, args) =>
+        {
+            SetState(SpeechPlaybackState.Idle);
+            Failed?.Invoke($"Ses çalınamadı: {args.ErrorMessage}");
+        };
+    }
+
+    public SpeechPlaybackState State { get; private set; } = SpeechPlaybackState.Idle;
+
+    /// <summary>Çalma ses düzeyi (0 - 1).</summary>
+    public double Volume
+    {
+        get => player.Volume;
+        set => player.Volume = Math.Clamp(value, 0, 1);
+    }
+
+    public event Action<SpeechPlaybackState>? StateChanged;
+
+    /// <summary>Okuma kendiliğinden (sona gelerek) bittiğinde tetiklenir.</summary>
+    public event Action? Completed;
+
+    /// <summary>Çalma sırasında oluşan hata; parametre kullanıcıya gösterilecek mesajdır.</summary>
+    public event Action<string>? Failed;
+
+    public IReadOnlyList<VoiceOption> GetVoices()
+    {
+        return SpeechSynthesizer.AllVoices
+            .Select(v => new VoiceOption(v.Id, v.DisplayName, v.Language, v.Gender == VoiceGender.Female ? "Kadın" : "Erkek"))
+            .OrderByDescending(v => v.IsTurkish)
+            .ThenBy(v => v.DisplayName, StringComparer.CurrentCulture)
+            .ToList();
+    }
+
+    /// <summary>Metni seçilen sesle okumaya başlar. Geçersiz durumda <see cref="SpeechAppException"/> fırlatır.</summary>
+    public async Task SpeakAsync(string text, VoiceOption? voice)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new SpeechAppException("Okunacak metin boş. Lütfen önce bir metin yazın.");
+        }
+
+        if (text.Length > MaxTextLength)
+        {
+            throw new SpeechAppException($"Metin çok uzun. En fazla {MaxTextLength:N0} karakter okunabilir.");
+        }
+
+        Stop();
+        int id = ++requestId;
+        SetState(SpeechPlaybackState.Preparing);
+
+        SpeechSynthesisStream stream;
+        try
+        {
+            synthesizer.Voice = FindVoice(voice);
+            stream = await synthesizer.SynthesizeTextToStreamAsync(text);
+        }
+        catch (SpeechAppException)
+        {
+            SetState(SpeechPlaybackState.Idle);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            SetState(SpeechPlaybackState.Idle);
+            throw new SpeechAppException($"Metin sese dönüştürülemedi. Windows konuşma servisine erişilemiyor olabilir.\n\nAyrıntı: {ex.Message}", ex);
+        }
+
+        if (id != requestId)
+        {
+            // Hazırlık sürerken Durdur'a basıldı veya yeni bir okuma başlatıldı.
+            stream.Dispose();
+            return;
+        }
+
+        currentStream = stream;
+        player.Source = MediaSource.CreateFromStream(stream, stream.ContentType);
+        player.Play();
+        SetState(SpeechPlaybackState.Speaking);
+    }
+
+    public void Stop()
+    {
+        requestId++;
+        player.Pause();
+        player.Source = null;
+        currentStream?.Dispose();
+        currentStream = null;
+        SetState(SpeechPlaybackState.Idle);
+    }
+
+    private static VoiceInformation FindVoice(VoiceOption? voice)
+    {
+        var voices = SpeechSynthesizer.AllVoices;
+        if (voices.Count == 0)
+        {
+            throw new SpeechAppException("Bilgisayarda yüklü konuşma sesi bulunamadı. Windows Ayarlar > Zaman ve dil > Konuşma bölümünden bir ses ekleyin.");
+        }
+
+        return voices.FirstOrDefault(v => v.Id == voice?.Id) ?? SpeechSynthesizer.DefaultVoice ?? voices[0];
+    }
+
+    private void OnPlaybackEnded()
+    {
+        if (State == SpeechPlaybackState.Idle)
+        {
+            return;
+        }
+
+        SetState(SpeechPlaybackState.Idle);
+        Completed?.Invoke();
+    }
+
+    private void SetState(SpeechPlaybackState state)
+    {
+        if (State == state)
+        {
+            return;
+        }
+
+        State = state;
+        StateChanged?.Invoke(state);
+    }
+
+    public void Dispose()
+    {
+        Stop();
+        player.Dispose();
+        synthesizer.Dispose();
+    }
+}
