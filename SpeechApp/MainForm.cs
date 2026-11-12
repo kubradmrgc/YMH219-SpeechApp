@@ -9,6 +9,8 @@ namespace SpeechApp;
 public partial class MainForm : Form
 {
     private readonly TextToSpeechService tts = new();
+    private readonly VoskModelManager modelManager = new();
+    private CancellationTokenSource? downloadCts;
     private int highlightStart = -1;
     private int highlightLength;
 
@@ -49,6 +51,10 @@ public partial class MainForm : Form
         tts.Failed += message => RunOnUi(() => ShowError(message));
         tts.WordReached += (start, length) => RunOnUi(() => HighlightWord(start, length));
 
+        downloadModelButton.Click += async (_, _) => await DownloadModelAsync();
+        cancelDownloadButton.Click += (_, _) => downloadCts?.Cancel();
+        chooseModelButton.Click += (_, _) => ChooseModelFolder();
+
         cancelDownloadButton.Enabled = false;
         stopListenButton.Enabled = false;
         sendToTtsButton.Enabled = false;
@@ -56,6 +62,144 @@ public partial class MainForm : Form
 
         LoadVoices();
         UpdateTtsState(SpeechPlaybackState.Idle);
+        UpdateModelStatus();
+    }
+
+    private bool IsDownloading => downloadCts is not null;
+
+    private void UpdateModelStatus()
+    {
+        bool installed = modelManager.IsInstalled;
+        if (installed)
+        {
+            modelStatusLabel.Text = $"Türkçe model hazır ✓  ({Path.GetFileName(modelManager.ModelPath)})";
+            modelStatusLabel.ForeColor = Color.SeaGreen;
+        }
+        else
+        {
+            modelStatusLabel.Text = "Türkçe model yüklü değil. Konuşma tanıma için modeli indirin (~35 MB).";
+            modelStatusLabel.ForeColor = Color.Firebrick;
+        }
+
+        downloadModelButton.Text = installed ? "Yeniden İndir" : "Modeli İndir";
+        downloadModelButton.Enabled = !IsDownloading;
+        chooseModelButton.Enabled = !IsDownloading;
+        cancelDownloadButton.Enabled = IsDownloading;
+        downloadProgress.Visible = IsDownloading;
+
+        listenButton.Enabled = installed && !IsDownloading;
+        recognizeFileButton.Enabled = installed && !IsDownloading;
+        UpdateActiveOperation();
+    }
+
+    private async Task DownloadModelAsync()
+    {
+        if (IsDownloading)
+        {
+            return;
+        }
+
+        downloadCts = new CancellationTokenSource();
+        downloadProgress.Value = 0;
+        downloadProgress.Style = ProgressBarStyle.Continuous;
+        UpdateModelStatus();
+        modelStatusLabel.Text = "Model indiriliyor...";
+        modelStatusLabel.ForeColor = Color.DarkOrange;
+        statusLabel.Text = $"İndiriliyor: {VoskModelManager.DefaultModelUri}";
+
+        var progress = new Progress<DownloadProgress>(p =>
+        {
+            if (p.Percent is double percent)
+            {
+                downloadProgress.Value = Math.Clamp((int)percent, 0, 100);
+                if (percent >= 100)
+                {
+                    downloadProgress.Style = ProgressBarStyle.Marquee;
+                    modelStatusLabel.Text = "Model açılıyor...";
+                    return;
+                }
+            }
+            else
+            {
+                downloadProgress.Style = ProgressBarStyle.Marquee;
+            }
+            modelStatusLabel.Text = $"Model indiriliyor: {p}";
+        });
+
+        try
+        {
+            await modelManager.DownloadAsync(progress, downloadCts.Token);
+            statusLabel.Text = $"Türkçe model indirildi: {modelManager.ModelPath}";
+        }
+        catch (OperationCanceledException)
+        {
+            statusLabel.Text = "Model indirme iptal edildi.";
+        }
+        catch (SpeechAppException ex)
+        {
+            ShowError(ex.Message);
+        }
+        finally
+        {
+            downloadCts.Dispose();
+            downloadCts = null;
+            if (!IsDisposed)
+            {
+                modelManager.Locate();
+                UpdateModelStatus();
+            }
+        }
+    }
+
+    private void ChooseModelFolder()
+    {
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Vosk model klasörünü seçin (içinde final.mdl bulunan klasör)",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            string folder = modelManager.UseFolder(dialog.SelectedPath);
+            statusLabel.Text = $"Model klasörü seçildi: {folder}";
+        }
+        catch (SpeechAppException ex)
+        {
+            ShowWarning(ex.Message);
+        }
+
+        UpdateModelStatus();
+    }
+
+    private void UpdateActiveOperation()
+    {
+        var operations = new List<string>();
+        switch (tts.State)
+        {
+            case SpeechPlaybackState.Preparing:
+            case SpeechPlaybackState.Speaking:
+                operations.Add("Metin okunuyor");
+                break;
+            case SpeechPlaybackState.Paused:
+                operations.Add("Okuma duraklatıldı");
+                break;
+        }
+
+        if (IsDownloading)
+        {
+            operations.Add("Model indiriliyor");
+        }
+
+        activeOperationLabel.Text = operations.Count == 0
+            ? "Aktif işlem: yok"
+            : "Aktif işlem: " + string.Join(" + ", operations);
     }
 
     private void LoadVoices()
@@ -123,12 +267,7 @@ public partial class MainForm : Form
             _ => ("■ HAZIR", Color.DimGray)
         };
 
-        activeOperationLabel.Text = state switch
-        {
-            SpeechPlaybackState.Idle => "Aktif işlem: yok",
-            SpeechPlaybackState.Paused => "Aktif işlem: Okuma duraklatıldı",
-            _ => "Aktif işlem: Metin okunuyor"
-        };
+        UpdateActiveOperation();
 
         if (state == SpeechPlaybackState.Speaking)
         {
@@ -208,6 +347,7 @@ public partial class MainForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        downloadCts?.Cancel();
         tts.Dispose();
         base.OnFormClosed(e);
     }
