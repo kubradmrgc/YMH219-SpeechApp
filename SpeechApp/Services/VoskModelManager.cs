@@ -3,10 +3,6 @@ using SpeechApp.Models;
 
 namespace SpeechApp.Services;
 
-/// <summary>
-/// Vosk konuşma tanıma modelinin bulunması, indirilmesi ve doğrulanmasından sorumludur.
-/// Modeller %LOCALAPPDATA%\YMH219-SpeechApp\models altında tutulur.
-/// </summary>
 public sealed class VoskModelManager
 {
     public const string DefaultModelName = "vosk-model-small-tr-0.3";
@@ -30,12 +26,10 @@ public sealed class VoskModelManager
 
     public string DefaultModelPath => Path.Combine(ModelsRoot, DefaultModelName);
 
-    /// <summary>Kullanılacak modelin klasörü; model yoksa null.</summary>
     public string? ModelPath { get; private set; }
 
     public bool IsInstalled => ModelPath is not null;
 
-    /// <summary>Önce kullanıcının seçtiği klasöre, sonra varsayılan indirme klasörüne bakar.</summary>
     public bool Locate()
     {
         ModelPath = null;
@@ -65,10 +59,6 @@ public sealed class VoskModelManager
         return IsInstalled;
     }
 
-    /// <summary>
-    /// Vosk modelinde akustik model (final.mdl) ve öznitelik ayarı (mfcc.conf) bulunur.
-    /// Yeni modeller bunları am/ ve conf/ altında, eski modeller (ör. small-tr-0.3) kök klasörde tutar.
-    /// </summary>
     public static bool IsValidModelFolder(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
@@ -83,10 +73,6 @@ public sealed class VoskModelManager
         return hasAcousticModel && hasFeatureConfig;
     }
 
-    /// <summary>
-    /// Kullanıcının elle seçtiği model klasörünü doğrular ve kalıcı olarak kaydeder.
-    /// Zip'ten çıkan üst klasör seçildiyse içindeki tek model klasörü kabul edilir.
-    /// </summary>
     public string UseFolder(string path)
     {
         string? modelFolder = FindModelFolder(path);
@@ -112,7 +98,6 @@ public sealed class VoskModelManager
         return modelFolder;
     }
 
-    /// <summary>Varsayılan Türkçe modeli indirir ve kurar.</summary>
     public async Task DownloadAsync(IProgress<DownloadProgress>? progress, CancellationToken cancellationToken)
     {
         await DownloadAsync(DefaultModelUri, progress, cancellationToken);
@@ -177,9 +162,6 @@ public sealed class VoskModelManager
         }
     }
 
-    /// <summary>
-    /// İndirilmiş (veya elle verilmiş) model zip dosyasını açar ve varsayılan model klasörüne taşır.
-    /// </summary>
     public async Task InstallFromZipAsync(string zipPath, CancellationToken cancellationToken = default)
     {
         string extractDir = Path.Combine(ModelsRoot, "_extract_" + Guid.NewGuid().ToString("N"));
@@ -257,3 +239,4 @@ public sealed class VoskModelManager
         }
     }
 }
+

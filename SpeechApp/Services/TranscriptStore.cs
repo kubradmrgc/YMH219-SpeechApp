@@ -3,9 +3,6 @@ using SpeechApp.Models;
 
 namespace SpeechApp.Services;
 
-/// <summary>
-/// Oturum boyunca tanınan cümleleri zaman damgasıyla saklar.
-/// </summary>
 public sealed class TranscriptStore
 {
     private static readonly CultureInfo Turkish = CultureInfo.GetCultureInfo("tr-TR");
@@ -19,9 +16,6 @@ public sealed class TranscriptStore
 
     public event Action? Cleared;
 
-    /// <summary>
-    /// Vosk çıktısı küçük harflidir; cümlenin ilk harfi Türkçe kurallarıyla büyütülerek eklenir (i → İ).
-    /// </summary>
     public RecognitionEntry Add(string text, string source)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -43,9 +37,9 @@ public sealed class TranscriptStore
         Cleared?.Invoke();
     }
 
-    /// <summary>Kayıtları "[saat] (kaynak) metin" satırları olarak verir.</summary>
     public string ToTimestampedText()
     {
         return string.Join(Environment.NewLine, entries.Select(e => e.ToString()));
     }
 }
+

@@ -5,10 +5,6 @@ using Windows.Media.SpeechSynthesis;
 
 namespace SpeechApp.Services;
 
-/// <summary>
-/// Windows konuşma sentezleyicisi ile metni ses akışına çevirir ve MediaPlayer ile çalar.
-/// Olaylar arka plan iş parçacıklarından tetiklenebilir.
-/// </summary>
 public sealed class TextToSpeechService : IDisposable
 {
     public const int MaxTextLength = 20_000;
@@ -33,7 +29,6 @@ public sealed class TextToSpeechService : IDisposable
 
     public SpeechPlaybackState State { get; private set; } = SpeechPlaybackState.Idle;
 
-    /// <summary>Çalma ses düzeyi (0 - 1).</summary>
     public double Volume
     {
         get => player.Volume;
@@ -42,13 +37,10 @@ public sealed class TextToSpeechService : IDisposable
 
     public event Action<SpeechPlaybackState>? StateChanged;
 
-    /// <summary>Okuma kendiliğinden (sona gelerek) bittiğinde tetiklenir.</summary>
     public event Action? Completed;
 
-    /// <summary>Çalma sırasında oluşan hata; parametre kullanıcıya gösterilecek mesajdır.</summary>
     public event Action<string>? Failed;
 
-    /// <summary>Bir kelime okunmaya başlandığında tetiklenir. Parametreler: metindeki başlangıç ve uzunluk.</summary>
     public event Action<int, int>? WordReached;
 
     public IReadOnlyList<VoiceOption> GetVoices()
@@ -60,9 +52,6 @@ public sealed class TextToSpeechService : IDisposable
             .ToList();
     }
 
-    /// <summary>
-    /// Metni seçilen ses ve hızla okumaya başlar. Geçersiz durumda <see cref="SpeechAppException"/> fırlatır.
-    /// </summary>
     public async Task SpeakAsync(string text, VoiceOption? voice, double rate = 1.0)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -218,3 +207,4 @@ public sealed class TextToSpeechService : IDisposable
         synthesizer.Dispose();
     }
 }
+

@@ -3,9 +3,6 @@ using SpeechApp.Models;
 
 namespace SpeechApp.Services;
 
-/// <summary>
-/// Seslendirilecek metni ve tanıma sonuçlarını .txt dosyası olarak okur/yazar.
-/// </summary>
 public static class TextFileService
 {
     public const long MaxFileBytes = 1024 * 1024;
@@ -18,9 +15,6 @@ public static class TextFileService
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
     }
 
-    /// <summary>
-    /// Metin dosyasını okur. UTF-8 olarak çözülemeyen dosyalar Türkçe Windows kodlamasıyla (1254) okunur.
-    /// </summary>
     public static string ReadText(string path)
     {
         try
@@ -58,7 +52,6 @@ public static class TextFileService
         }
     }
 
-    /// <summary>Metni UTF-8 (BOM'lu) olarak kaydeder; Türkçe karakterler Not Defteri'nde de doğru görünür.</summary>
     public static void WriteText(string path, string text)
     {
         try
@@ -72,7 +65,6 @@ public static class TextFileService
         }
     }
 
-    /// <summary>Tanıma sonuçlarını başlık ve zaman damgalarıyla birlikte metne dönüştürür.</summary>
     public static string BuildTranscriptDocument(IReadOnlyList<RecognitionEntry> entries)
     {
         var builder = new StringBuilder();
@@ -90,3 +82,4 @@ public static class TextFileService
 
     private static string Normalize(string text) => text.ReplaceLineEndings("\n");
 }
+

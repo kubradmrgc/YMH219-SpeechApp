@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
@@ -7,10 +7,6 @@ using Vosk;
 
 namespace SpeechApp.Services;
 
-/// <summary>
-/// Mikrofondan alınan sesi Vosk ile çevrimdışı olarak yazıya çevirir.
-/// Ses NAudio ile 16 kHz, 16 bit, mono olarak kaydedilir ve parça parça tanıyıcıya verilir.
-/// </summary>
 public sealed class SpeechToTextService : IDisposable
 {
     public const int SampleRate = 16000;
@@ -35,19 +31,14 @@ public sealed class SpeechToTextService : IDisposable
 
     public event Action<RecognitionState>? StateChanged;
 
-    /// <summary>Konuşma sürerken değişen ara metin.</summary>
     public event Action<string>? PartialResult;
 
-    /// <summary>Bir cümle (sessizlikle biten bölüm) kesinleştiğinde gelen metin.</summary>
     public event Action<string>? FinalResult;
 
-    /// <summary>0-1 arası anlık ses seviyesi.</summary>
     public event Action<float>? LevelChanged;
 
-    /// <summary>Dinlemeyi durduran hatalar (ör. mikrofon çıkarıldı).</summary>
     public event Action<string>? Failed;
 
-    /// <summary>Dinleme sürerken kullanıcıya gösterilecek uyarılar (ör. mikrofondan ses gelmiyor).</summary>
     public event Action<string>? Warning;
 
     public static IReadOnlyList<MicrophoneInfo> GetMicrophones()
@@ -64,9 +55,6 @@ public sealed class SpeechToTextService : IDisposable
         return microphones;
     }
 
-    /// <summary>
-    /// WinMM aygıt adlarını 31 karakterde keser; tam adlar Windows ses uç noktalarından alınır.
-    /// </summary>
     private static IReadOnlyList<string> GetCaptureEndpointNames()
     {
         try
@@ -88,9 +76,6 @@ public sealed class SpeechToTextService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Vosk modelini belleğe yükler. Model büyük olduğundan arka planda yüklenir ve önbellekte tutulur.
-    /// </summary>
     public async Task LoadModelAsync(string modelPath)
     {
         if (model is not null && loadedModelPath == modelPath)
@@ -182,10 +167,6 @@ public sealed class SpeechToTextService : IDisposable
         SetState(RecognitionState.Listening);
     }
 
-    /// <summary>
-    /// WAV dosyasındaki konuşmayı yazıya çevirir. Her cümle <see cref="FinalResult"/> ile bildirilir.
-    /// Dosya gerekirse mono ve 16 kHz'e dönüştürülür. Tanınan cümle sayısını döndürür.
-    /// </summary>
     public async Task<int> RecognizeFileAsync(string modelPath, string wavPath, IProgress<double>? progress, CancellationToken cancellationToken)
     {
         if (State != RecognitionState.Idle)
@@ -273,7 +254,6 @@ public sealed class SpeechToTextService : IDisposable
         return sentences;
     }
 
-    /// <summary>Dinlemeyi durdurur; son söylenen bölüm de kesin sonuç olarak bildirilir.</summary>
     public void Stop()
     {
         if (State != RecognitionState.Listening)
@@ -444,9 +424,6 @@ public sealed class SpeechToTextService : IDisposable
             : string.Empty;
     }
 
-    /// <summary>
-    /// Vosk, model dosyaları okunamazsa istisna atmak yerine boş tanıtıcı döndürür; bunu yakalamak gerekir.
-    /// </summary>
     private static bool IsLoaded(Model loaded)
     {
         var field = typeof(Model).GetField("handle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
@@ -465,3 +442,4 @@ public sealed class SpeechToTextService : IDisposable
         model = null;
     }
 }
+

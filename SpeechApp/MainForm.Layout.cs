@@ -1,8 +1,5 @@
 namespace SpeechApp;
 
-/// <summary>
-/// Ana pencerenin kontrolleri ve yerleşimi. Olay mantığı MainForm.cs dosyasındadır.
-/// </summary>
 public partial class MainForm
 {
     private static readonly Font IndicatorFont = new("Segoe UI", 10f, FontStyle.Bold);
@@ -217,3 +214,4 @@ public partial class MainForm
         return new Button { Name = name, Text = text, AutoSize = true, MinimumSize = new Size(90, 32), Margin = new Padding(3, 3, 3, 3) };
     }
 }
+

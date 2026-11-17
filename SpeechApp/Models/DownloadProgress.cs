@@ -1,8 +1,5 @@
 namespace SpeechApp.Models;
 
-/// <summary>
-/// Model indirme ilerlemesi. Sunucu dosya boyutunu bildirmezse <see cref="TotalBytes"/> boştur.
-/// </summary>
 public readonly record struct DownloadProgress(long ReceivedBytes, long? TotalBytes)
 {
     public double? Percent => TotalBytes is > 0 ? ReceivedBytes * 100.0 / TotalBytes.Value : null;
@@ -15,3 +12,4 @@ public readonly record struct DownloadProgress(long ReceivedBytes, long? TotalBy
             : received;
     }
 }
+

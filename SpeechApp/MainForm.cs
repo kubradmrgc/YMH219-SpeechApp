@@ -3,9 +3,6 @@ using SpeechApp.Services;
 
 namespace SpeechApp;
 
-/// <summary>
-/// Metni sesli okuma (Text-to-Speech) ve konuşmayı yazıya çevirme (Speech-to-Text) penceresi.
-/// </summary>
 public partial class MainForm : Form
 {
     private readonly TextToSpeechService tts = new();
@@ -337,9 +334,6 @@ public partial class MainForm : Form
         }
     }
 
-    /// <summary>
-    /// Listede seçili sonuçlar varsa onları, yoksa tanınan metnin tamamını seslendirme sekmesine aktarır.
-    /// </summary>
     private void SendToTts()
     {
         string text = resultsList.SelectedItems.Count > 0
@@ -690,3 +684,4 @@ public partial class MainForm : Form
         base.OnFormClosed(e);
     }
 }
+
